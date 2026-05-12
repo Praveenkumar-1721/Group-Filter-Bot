@@ -108,32 +108,52 @@ def update_bot_links(message):
     except:
         bot.reply_to(message, "❌ Error updating links.")
 
-# --- 5. SMART AUTO FILTER (Reaction Added) ---
+# --- 5. SMART AUTO FILTER (Multiple Results + Clean Query) ---
 @bot.message_handler(func=lambda message: True)
 def filter_movies(message):
     if message.text.startswith('/'):
         return
+        
     search_query = message.text.lower().strip()
+    # Common words-a ignore pannuvom
+    ignore_words = ["hd", "tamil", "2023", "2024", "2025", "2026", "1080p", "720p", "mp4", "mkv", "movie"]
     
-    # Simple search: Exact check then smart search
-    movie = collection.find_one({"name": search_query})
-    if not movie:
-        movie = collection.find_one({"$text": {"$search": search_query}})
+    # User message-la irundhu ignore words-a thookittu clean panna query
+    clean_query = " ".join([word for word in search_query.split() if word not in ignore_words])
+
+    if not clean_query: # Verum numbers mattum potta ignore pannidum
+        return
+
+    found_movies = []
+    all_movies = collection.find()
     
-    if movie:
-        # --- 👍 REACTION LOGIC ---
+    for m in all_movies:
+        db_name = m['name'].lower()
+        
+        # LOGIC: Clean query DB-la irukka nu check panrom
+        if clean_query in db_name or db_name in clean_query:
+            found_movies.append(m)
+
+    if found_movies:
+        # Reaction podurom
         try:
             bot.set_message_reaction(message.chat.id, message.message_id, [types.ReactionTypeEmoji('👍')], is_big=False)
         except:
-            pass # Bot admin illana reaction vizhadhu, so ignore error
+            pass
 
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🍿 Download Movie", url=movie['link']))
-        reply = f"🎬 **{movie['name'].title()}**\n\nHey {message.from_user.first_name}, unga movie ready! 👇\n\n_⚠️ Deleted in 5 mins._"
-        sent = bot.reply_to(message, reply, reply_markup=markup, parse_mode="Markdown")
+        # Ellaa kidaicha movies-ayum buttons-ah add panrom
+        for movie in found_movies:
+            btn_text = f"🍿 {movie['name'].title()}"
+            markup.add(types.InlineKeyboardButton(btn_text, url=movie['link']))
         
-        # 5 mins auto-delete
-        Thread(target=delete_msg, args=(message.chat.id, sent.message_id)).start()
+        reply_text = f"🎬 **Found {len(found_movies)} results!**\n\nHey {message.from_user.first_name}, unga movies ready! 👇\n\n_⚠️ Deleted in 5 mins._"
+        
+        sent_msg = bot.reply_to(message, reply_text, reply_markup=markup, parse_mode="Markdown")
+        
+        # 5 mins-la auto delete
+        Thread(target=delete_msg, args=(message.chat.id, sent_msg.message_id)).start()
+
 
 if __name__ == "__main__":
     keep_alive()
