@@ -15,8 +15,12 @@ app = Flask(__name__)
 
 # --- MONGODB CONNECTION ---
 client = MongoClient(MONGO_URL)
-db = client['CinemxticDB']       # Database Name
-collection = db['movies']        # Table Name
+db = client['CinemxticDB']       
+collection = db['movies']        
+
+# INDHA LINE-A PUDHUSA ADD PANNU 👇
+collection.create_index([("name", "text")])
+
 
 # --- WEB SERVER (For 24/7) ---
 @app.route('/')
@@ -95,23 +99,26 @@ def update_bot_links(message):
     except Exception as e:
         bot.reply_to(message, "❌ Error updating links.")
 
-# --- 4. AUTO FILTER (Group-la reply panradhu) ---
+# --- 4. AUTO FILTER (Smart Search) ---
 @bot.message_handler(func=lambda message: True)
 def filter_movies(message):
-    # '/' vachu start aana adhu command, so ignore pannidalam
+    # Command vanda ignore pannidalam
     if message.text.startswith('/'):
         return
         
     search_query = message.text.lower()
     
-    # DB-la movie name irukka nu thedurom
+    # Logic 1: First Exact ah match aagudha nu paakkum (Example: "Leo")
     movie = collection.find_one({"name": search_query})
+    
+    # Logic 2: Exact ah illana, Text Search use panni related ah thedum (Example: "Leo hd tamil")
+    if not movie:
+        movie = collection.find_one({"$text": {"$search": search_query}})
     
     if movie:
         movie_name = movie['name'].title()
         link = movie['link']
         
-        # Link-a professional-a button la vaikkurom (looks very neat in groups)
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🍿 Download Movie", url=link))
         
@@ -119,8 +126,9 @@ def filter_movies(message):
         
         sent_msg = bot.reply_to(message, reply_text, reply_markup=markup, parse_mode="Markdown")
         
-        # 5 mins-la auto delete start aagudhu
+        # 5 mins-la auto delete start
         Thread(target=delete_msg, args=(message.chat.id, sent_msg.message_id)).start()
+
 
 if __name__ == "__main__":
     keep_alive()
