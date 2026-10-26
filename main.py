@@ -122,53 +122,51 @@ def update_bot_links(message):
     except:
         bot.reply_to(message, "❌ Error updating links.")
 
-# --- 5. SMART AUTO FILTER (Multiple Results + Word Match + Season Matching) ---
+# --- 5. SMART AUTO FILTER (Simple Core Match) ---
 @bot.message_handler(func=lambda message: True)
 def filter_movies(message):
     if message.text.startswith('/'):
         return
         
-    raw_query = message.text
-    norm_query = normalize_text(raw_query)
+    user_msg = message.text.lower().strip()
     
-    # Common words & filler keywords ignore list
-    ignore_words = {
-        "hd", "tamil", "telugu", "hindi", "malayalam", "kannada", "english", 
-        "dubbed", "tamilyogi", "isaimini", "movie", "film", "download", 
-        "link", "send", "please", "bro", "da", "1080p", "720p", "480p", 
-        "mp4", "mkv"
+    # Noise words-a thevaillaama compare panna koodadhu
+    noise_words = {
+        "movie", "film", "download", "link", "send", "please", "bro", 
+        "da", "tamil", "telugu", "hindi", "english", "hd", "1080p", 
+        "720p", "480p", "mp4", "mkv", "dubbed"
     }
     
-    # Meaningful words edukkurohm
-    query_words = [w for w in norm_query.split() if w not in ignore_words]
-
-    if not query_words:
-        return
-
     found_movies = []
     seen_links = set()
     all_movies = collection.find()
     
     for m in all_movies:
-        db_raw = m['name']
-        db_norm = normalize_text(db_raw)
-        db_words = set(db_norm.split())
-
-        # Match Conditions:
-        # 1. Direct substring (ex: "bigil" in DB "bigil (2019)")
-        clean_query_str = " ".join(query_words)
-        is_sub = clean_query_str in db_norm or db_norm in clean_query_str
+        db_title = m['name'].lower().strip()
         
-        # 2. Query-la irukka words DB title-la irukka nu check
-        is_word_match = all(qw in db_words or any(qw in dw for dw in db_words) for qw in query_words)
-        
-        if is_sub or is_word_match:
+        # 1. Direct match check (Full title user text-kulla irundha)
+        if db_title in user_msg or user_msg in db_title:
             if m['link'] not in seen_links:
                 found_movies.append(m)
                 seen_links.add(m['link'])
+            continue
+            
+        # 2. Main title words check (Session/Season/Numbers thavirthu mukkiyamana words)
+        # DB title-la irukka words-a edukkurom
+        raw_db_words = [w.strip("()[]{}.-_") for w in db_title.split()]
+        core_db_words = [w for w in raw_db_words if w and w not in noise_words and not w.startswith('s0') and not w.startswith('s1') and not w.isdigit()]
+        
+        # Core words (Ex: ['stranger', 'things']) user message-kulla irundha match!
+        if core_db_words:
+            matched_words = [w for w in core_db_words if w in user_msg]
+            # Core words ellame user text-la irundha send pannu
+            if len(matched_words) == len(core_db_words):
+                if m['link'] not in seen_links:
+                    found_movies.append(m)
+                    seen_links.add(m['link'])
 
     if found_movies:
-        # Reaction 👍
+        # 👍 Reaction to user msg
         try:
             bot.set_message_reaction(message.chat.id, message.message_id, [types.ReactionTypeEmoji('👍')], is_big=False)
         except:
@@ -185,6 +183,7 @@ def filter_movies(message):
         
         # 5 mins-la auto delete
         Thread(target=delete_msg, args=(message.chat.id, sent_msg.message_id)).start()
+
 
 if __name__ == "__main__":
     keep_alive()
