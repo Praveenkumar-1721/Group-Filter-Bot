@@ -5,6 +5,7 @@ from flask import Flask
 from threading import Thread
 import time
 import os
+import re
 
 # --- SETTINGS ---
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -41,6 +42,19 @@ def delete_msg(chat_id, msg_id):
         bot.delete_message(chat_id, msg_id)
     except:
         pass
+
+# --- HELPER: TEXT NORMALIZER ---
+def normalize_text(text):
+    text = text.lower().strip()
+    # Punctuation / brackets remove panrom
+    text = re.sub(r'[\(\)\[\]\{\}\-_,\.]', ' ', text)
+    # "season 3" / "season 03" -> "s03" (standardize)
+    text = re.sub(r'\bseason\s*0*(\d+)\b', lambda m: f"s{int(m.group(1)):02d}", text)
+    # "s 3" or "s3" -> "s03"
+    text = re.sub(r'\bs\s*0*(\d+)\b', lambda m: f"s{int(m.group(1)):02d}", text)
+    # Extra spaces clean panrom
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 # --- 1. START COMMAND ---
 @bot.message_handler(commands=['start'])
@@ -108,41 +122,59 @@ def update_bot_links(message):
     except:
         bot.reply_to(message, "❌ Error updating links.")
 
-# --- 5. SMART AUTO FILTER (Multiple Results + Clean Query) ---
+# --- 5. SMART AUTO FILTER (Multiple Results + Word Match + Season Matching) ---
 @bot.message_handler(func=lambda message: True)
 def filter_movies(message):
     if message.text.startswith('/'):
         return
         
-    search_query = message.text.lower().strip()
-    # Common words-a ignore pannuvom
-    ignore_words = ["hd", "tamil", "2023", "2024", "2025", "2026", "1080p", "720p", "mp4", "mkv", "movie"]
+    raw_query = message.text
+    norm_query = normalize_text(raw_query)
     
-    # User message-la irundhu ignore words-a thookittu clean panna query
-    clean_query = " ".join([word for word in search_query.split() if word not in ignore_words])
+    # Common words & filler keywords ignore list
+    ignore_words = {
+        "hd", "tamil", "telugu", "hindi", "malayalam", "kannada", "english", 
+        "dubbed", "tamilyogi", "isaimini", "movie", "film", "download", 
+        "link", "send", "please", "bro", "da", "1080p", "720p", "480p", 
+        "mp4", "mkv"
+    }
+    
+    # Meaningful words edukkurohm
+    query_words = [w for w in norm_query.split() if w not in ignore_words]
 
-    if not clean_query: # Verum numbers mattum potta ignore pannidum
+    if not query_words:
         return
 
     found_movies = []
+    seen_links = set()
     all_movies = collection.find()
     
     for m in all_movies:
-        db_name = m['name'].lower()
+        db_raw = m['name']
+        db_norm = normalize_text(db_raw)
+        db_words = set(db_norm.split())
+
+        # Match Conditions:
+        # 1. Direct substring (ex: "bigil" in DB "bigil (2019)")
+        clean_query_str = " ".join(query_words)
+        is_sub = clean_query_str in db_norm or db_norm in clean_query_str
         
-        # LOGIC: Clean query DB-la irukka nu check panrom
-        if clean_query in db_name or db_name in clean_query:
-            found_movies.append(m)
+        # 2. Query-la irukka words DB title-la irukka nu check
+        is_word_match = all(qw in db_words or any(qw in dw for dw in db_words) for qw in query_words)
+        
+        if is_sub or is_word_match:
+            if m['link'] not in seen_links:
+                found_movies.append(m)
+                seen_links.add(m['link'])
 
     if found_movies:
-        # Reaction podurom
+        # Reaction 👍
         try:
             bot.set_message_reaction(message.chat.id, message.message_id, [types.ReactionTypeEmoji('👍')], is_big=False)
         except:
             pass
 
         markup = types.InlineKeyboardMarkup()
-        # Ellaa kidaicha movies-ayum buttons-ah add panrom
         for movie in found_movies:
             btn_text = f"🍿 {movie['name'].title()}"
             markup.add(types.InlineKeyboardButton(btn_text, url=movie['link']))
@@ -153,7 +185,6 @@ def filter_movies(message):
         
         # 5 mins-la auto delete
         Thread(target=delete_msg, args=(message.chat.id, sent_msg.message_id)).start()
-
 
 if __name__ == "__main__":
     keep_alive()
